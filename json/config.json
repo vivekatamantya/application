@@ -1,0 +1,20 @@
+{
+  "device_fps": 30,
+  "device_width": 640,
+  "device_height": 360,
+  "device_bitrate": 2000000,
+  "audio_device": "hw:1,0",
+  "audio_samplerate": 48000,
+  "protocol": "webRTC",
+  "server_ip": "3.130.16.226",
+  "server_port": "9073",
+  "check_interval_stream_file": 5,
+  "turn-servers": 
+  	[{"url": "turn://fc71a5c5c65f70e8e776af7d:EFzdth3o8JfRsON2@standard.relay.metered.ca:80"},
+	 {"url": "turn://fc71a5c5c65f70e8e776af7d:EFzdth3o8JfRsON2@standard.relay.metered.ca:80?transport=udp"}
+	],
+  "apns_list":
+  [
+    {"type": "IPV4V6","name":"airtelgprs.com"}
+  ]
+}

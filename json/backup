@@ -1,0 +1,25 @@
+{
+  "device_fps": 30,
+  "device_width": 1920,
+  "device_height": 1080,
+  "device_bitrate": 2000000,
+  "audio_device": "hw:1,0",
+  "audio_samplerate": 48000,
+  "protocol": "webRTC",
+  "server_ip": "3.130.16.226",
+  "server_port": "9004",
+  "check_interval_stream_file": 5,
+  "turn-servers": 
+  	[{"url": "turn:webrtc.gstreamer.net:3478?transport=tcp"}
+	],
+  "apns_list":
+  [
+    {"type": "IPV4V6","name":"IMS"},
+    {"type": "IPV4V6","name":"VZWINTERNET"},
+    {"type": "IPV4V6","name":"vzwinternet"},
+    {"type": "IPV4V6","name":"vzwapp"},
+    {"type": "IPV4V6","name":"vzwemergency"},
+    {"type": "IPV4V6","name":"vzwclass6"},
+    {"type": "IPV4V6","name":"vzwiotts"}
+  ]
+}

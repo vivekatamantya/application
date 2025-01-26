@@ -1,0 +1,17 @@
+{
+  "audio_device": "STM32",
+  "signalling_server_ip": "3.130.16.226",
+  "signalling_server_port": 9073,
+  "restapi_post_add": "http://3.130.16.226:9093/setParameter",
+  "new_buffer_file_time_sec": 20,
+  "stun_server": "stun://stun.relay.metered.ca:80",
+  "turn_server": 
+  	[
+		{"url": "turn://fc71a5c5c65f70e8e776af7d:EFzdth3o8JfRsON2@standard.relay.metered.ca:80"},
+	 	{"url": "turn://fc71a5c5c65f70e8e776af7d:EFzdth3o8JfRsON2@standard.relay.metered.ca:80?transport=udp"}
+	],
+  "sim_card_apn":
+  	[
+    		{"type": "IPV4V6","name":"jionet"}
+  	]
+}

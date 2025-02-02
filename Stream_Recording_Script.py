@@ -6,7 +6,6 @@ import subprocess
 import threading
 import logging
 import glob
-import psutil
 
 # Constants
 JSON_CONFIG_FILE = "/home/root/json/config.json"
@@ -27,18 +26,14 @@ def configure_logger():
         if not os.path.exists(PYTHON_SCRIPT_LOG_DIR):
             os.makedirs(PYTHON_SCRIPT_LOG_DIR)
 
-        # Log file path
         LOG_FILE = os.path.join(PYTHON_SCRIPT_LOG_DIR, "file_management_service.log")
 
-        # Console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.DEBUG)
 
-        # Rotating file handler (max 50MB per file, keeps last 3 logs)
         file_handler = RotatingFileHandler(LOG_FILE, maxBytes=50*1024*1024, backupCount=3)
         file_handler.setLevel(logging.DEBUG)
 
-        # Formatter
         formatter = logging.Formatter("[%(levelname)s][%(asctime)s::%(msecs)03d][%(message)s]", datefmt="%d-%m-%y %H:%M:%S")
         console_handler.setFormatter(formatter)
         file_handler.setFormatter(formatter)
@@ -95,15 +90,12 @@ def start_application():
             logger.error("Cannot start application: No valid 5GCamera* binary found...!!!")
             return None
 
-        # Ensure the log directory exists
         if not os.path.exists(CAMERA_APP_LOG_DIR):
             os.makedirs(CAMERA_APP_LOG_DIR)
 
-        # Generate log file name with timestamp
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
         log_file_path = os.path.join(CAMERA_APP_LOG_DIR, f"application_{timestamp}.log")
 
-        # Open the log file and redirect stdout & stderr
         with open(log_file_path, "a") as log_file:
             process = subprocess.Popen(
                 [app_path],
@@ -120,14 +112,24 @@ def start_application():
         return None
 
 def get_running_pid():
-    """Find the PID of the running application that starts with '5GCamera' and ensure it's not defunct"""
+    """Find the PID of the running application that starts with '5GCamera'"""
     try:
-        for process in psutil.process_iter(['pid', 'name', 'status']):
-            if process.info['name'] and process.info['name'].startswith("5GCamera"):
-                if process.info['status'] == psutil.STATUS_ZOMBIE:
-                    logger.warning(f"Process {process.info['name']} (PID {process.info['pid']}) is a zombie! Restarting...")
-                    return None
-                return process.info['pid']
+        result = subprocess.run(["pgrep", "-f", "5GCamera"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        pids = result.stdout.strip().split("\n")
+
+        for pid in pids:
+            if pid.isdigit():
+                pid = int(pid)
+
+                # Check if the process is a zombie
+                ps_output = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                status = ps_output.stdout.strip()
+
+                if "Z" in status:  # Check if process is defunct (zombie)
+                    logger.warning(f"Process 5GCamera (PID {pid}) is a zombie! Restarting...")
+                    return None  # Ignore zombie process
+
+                return pid
 
         return None
 

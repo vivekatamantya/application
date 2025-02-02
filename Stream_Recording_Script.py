@@ -5,17 +5,17 @@ import uuid
 import subprocess
 import threading
 import logging
+import glob
+import psutil
 
 # Constants
-JSON_CONFIG_FILE = "~/json/config.json"
-CAMERA_APP_NAME = "5GCamera*"
+JSON_CONFIG_FILE = "/home/root/json/config.json"
 SYSTEM_TIMESTAMP_PATH = "./system_timestamp.txt"
 SYSTEM_UUID_PATH = "./system_uuid.txt"
-CAMERA_APP_RUN_COMMAND = "./5GCamera*"          # Command to start 5GCamera application
-CAMERA_APP_LOG_DIR = "~/Camera5gAppLogs"        # Define log directory
-PYTHON_SCRIPT_LOG_DIR = "~/PythonScriptLogs"    # Define log directory
+CAMERA_APP_LOG_DIR = "/home/root/Camera5gAppLogs"
+PYTHON_SCRIPT_LOG_DIR = "/home/root/PythonScriptLogs"
 
-# Initialize logger from your function
+# Initialize logger
 from logging.handlers import RotatingFileHandler
 
 def configure_logger():
@@ -28,7 +28,7 @@ def configure_logger():
             os.makedirs(PYTHON_SCRIPT_LOG_DIR)
 
         # Log file path
-        LOG_FILE = os.path.join(PYTHON_SCRIPT_LOG_DIR, "file_management_service.log")  # No timestamp (keeps rotating)
+        LOG_FILE = os.path.join(PYTHON_SCRIPT_LOG_DIR, "file_management_service.log")
 
         # Console handler
         console_handler = logging.StreamHandler()
@@ -48,7 +48,6 @@ def configure_logger():
 
     return logger
 
-
 logger = configure_logger()
 
 def load_config(file_path):
@@ -60,41 +59,45 @@ def load_config(file_path):
         logger.error(f"Failed to load config file: {e}")
         return None
 
-
 def is_network_available(server_ip):
     """Check if the server is reachable via ping"""
     try:
         result = subprocess.run(["ping", "-c", "1", server_ip], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if result.returncode == 0:
-            logger.info(f"Successfully reached server {server_ip}.")
-            return True
-        else:
-            logger.warning(f"Server {server_ip} is unreachable")
-            return False
+        return result.returncode == 0
     except Exception as e:
         logger.error(f"Network check failed: {e}")
         return False
 
-
-def get_running_pid(app_name):
-    """Check if application is running and return its PID"""
+def find_application_binary():
+    """Find the actual binary that starts with '5GCamera' in the current script directory"""
     try:
-        result = subprocess.run(['pgrep', '-f', app_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.stdout.strip():
-            pid = int(result.stdout.strip().split("\n")[0])  # Return first PID found
-            logger.info(f"Application {app_name} is running with PID {pid}.")
-            return pid
-    except Exception as e:
-        logger.error(f"Error checking application status: {e}")
-    return None
+        script_directory = os.path.dirname(os.path.abspath(__file__))
+        matching_files = glob.glob(os.path.join(script_directory, "5GCamera*"))
 
+        for file in matching_files:
+            if os.path.isfile(file) and os.access(file, os.X_OK):
+                logger.info(f"Found application binary: {file}")
+                return file
+
+        logger.error("No valid '5GCamera*' binary found in the current directory!!!")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error finding application binary: {e}")
+        return None
 
 def start_application():
-    """Start the application in the background and save logs with timestamps"""
+    """Start the application dynamically"""
     try:
+        app_path = find_application_binary()
+
+        if not app_path:
+            logger.error("Cannot start application: No valid 5GCamera* binary found...!!!")
+            return None
+
         # Ensure the log directory exists
-        if not os.path.exists(LOG_DIR):
-            os.makedirs(CAMERA_APP_LOG_DIR)  # Create the log directory if it does not exist
+        if not os.path.exists(CAMERA_APP_LOG_DIR):
+            os.makedirs(CAMERA_APP_LOG_DIR)
 
         # Generate log file name with timestamp
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
@@ -102,126 +105,121 @@ def start_application():
 
         # Open the log file and redirect stdout & stderr
         with open(log_file_path, "a") as log_file:
-            process = subprocess.Popen(CAMERA_APP_RUN_COMMAND, shell=True, stdout=log_file, stderr=log_file)
+            process = subprocess.Popen(
+                [app_path],
+                stdout=log_file,
+                stderr=log_file,
+                preexec_fn=os.setsid
+            )
 
-        logger.info(f"Started application {CAMERA_APP_RUN_COMMAND} with PID {process.pid}, logs: {log_file_path}")
+        logger.info(f"Started application {app_path} with PID {process.pid}, logs: {log_file_path}")
         return process.pid
 
     except Exception as e:
         logger.error(f"Failed to start application: {e}")
         return None
 
+def get_running_pid():
+    """Find the PID of the running application that starts with '5GCamera' and ensure it's not defunct"""
+    try:
+        for process in psutil.process_iter(['pid', 'name', 'status']):
+            if process.info['name'] and process.info['name'].startswith("5GCamera"):
+                if process.info['status'] == psutil.STATUS_ZOMBIE:
+                    logger.warning(f"Process {process.info['name']} (PID {process.info['pid']}) is a zombie! Restarting...")
+                    return None
+                return process.info['pid']
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Error checking application status: {e}")
+        return None
 
 def monitor_application():
-    """Ensure application is always running"""
-    while True:
-        pid = get_running_pid(CAMERA_APP_NAME)
-        if not pid:
-            logger.warning(f"{CAMERA_APP_NAME} is not running!!! Restarting...!!!")
-            start_application()
-        time.sleep(5)  # Check every 5 seconds
+    """Ensure application is always running, with restart delay and retry limit"""
+    retry_count = 0
+    max_retries = 5
 
+    while True:
+        pid = get_running_pid()
+        if not pid:
+            logger.warning("5GCamera* is not running!!! Restarting...!!!")
+
+            if retry_count >= max_retries:
+                logger.error("Max retries reached. Not restarting application for now.")
+                time.sleep(60)
+                retry_count = 0
+
+            else:
+                start_application()
+                retry_count += 1
+                time.sleep(5)
+
+        else:
+            retry_count = 0
+
+        time.sleep(5)
 
 def wait_for_timestamp_file():
     """Wait indefinitely for system_timestamp.txt to appear"""
     while True:
         if os.path.exists(SYSTEM_TIMESTAMP_PATH):
-            logger.info(f"Timestamp file found: {SYSTEM_TIMESTAMP_PATH}")
             return True
         logger.warning("Waiting for timestamp file to appear...!!!")
-        time.sleep(5)  # Keep checking every 5 seconds
-
+        time.sleep(5)
 
 def read_timestamp():
-    """Read the timestamp from system_timestamp.txt or fallback to current system time if corrupted"""
+    """Read timestamp or fallback to current system time"""
     try:
         if os.path.exists(SYSTEM_TIMESTAMP_PATH):
             with open(SYSTEM_TIMESTAMP_PATH, 'r') as file:
                 timestamp = file.readline().strip()
-
-                # Check if timestamp is a valid integer
-                if timestamp.isdigit():
-                    logger.info(f"Read valid timestamp: {timestamp}")
-                    return int(timestamp)
-                else:
-                    logger.warning("Invalid timestamp format in system_timestamp.txt. Using system time")
-
-        else:
-            logger.warning(f"{SYSTEM_TIMESTAMP_PATH} does not exist. Using system time")
-
+                return int(timestamp) if timestamp.isdigit() else int(time.time())
     except Exception as e:
         logger.error(f"Error reading timestamp: {e}")
 
-    # If the file is missing or corrupt, return current system time as fallback
-    fallback_timestamp = int(time.time())
-    logger.info(f"Using system timestamp as fallback: {fallback_timestamp}")
-    return fallback_timestamp
-
+    return int(time.time())
 
 def generate_uuid_from_timestamp(timestamp):
     """Generate UUID based on timestamp"""
-    new_uuid = uuid.uuid1(node=timestamp)
-    logger.info(f"Generated UUID: {new_uuid}")
-    return new_uuid
-
+    return uuid.uuid1(node=timestamp)
 
 def ensure_uuid_file():
     """Ensure system_uuid.txt exists, and create it if not"""
     if os.path.exists(SYSTEM_UUID_PATH):
         with open(SYSTEM_UUID_PATH, 'r') as file:
             existing_uuid = file.readline().strip()
-            if existing_uuid:
-                logger.info(f"Existing UUID found: {existing_uuid}")
-                return existing_uuid
+            return existing_uuid if existing_uuid else generate_uuid_from_timestamp(read_timestamp())
 
-    # Wait for timestamp file before generating UUID
     wait_for_timestamp_file()
 
-    timestamp = read_timestamp()
-    if not timestamp:
-        logger.error("Failed to retrieve timestamp. Exiting")
-        return None
-
-    new_uuid = generate_uuid_from_timestamp(timestamp)
+    new_uuid = generate_uuid_from_timestamp(read_timestamp())
     with open(SYSTEM_UUID_PATH, 'w') as file:
         file.write(str(new_uuid))
-    logger.info(f"New UUID generated and saved: {new_uuid}")
+
     return str(new_uuid)
 
-
 def main():
-    """Main function to coordinate all tasks."""
-    # Load configuration
-    config = load_config(CONFIG_FILE)
+    """Main function to coordinate all tasks"""
+    config = load_config(JSON_CONFIG_FILE)
     if not config:
-        logger.error("Configuration could not be loaded. Exiting...!!!")
         return
 
     server_ip = config.get("signalling_server_ip")
-    server_port = config.get("signalling_server_port")
-
-    if not server_ip or not server_port:
-        logger.error("Missing server IP or port in config. Exiting...!!!")
-        return
-
-    # Check network connectivity
     if not is_network_available(server_ip):
-        logger.error(f"Cannot reach server {server_ip}. Exiting...!!!")
         return
 
-    # Check if application is running, start if not
-    pid = get_running_pid(APP_NAME)
+    pid = get_running_pid()
     if not pid:
-        logger.info("Application is not running. Starting it now...!!!")
         start_application()
 
-    # Monitor application in a separate thread
     monitor_thread = threading.Thread(target=monitor_application, daemon=True)
     monitor_thread.start()
 
-    # Ensure UUID file exists or create it
     ensure_uuid_file()
 
+    while True:
+        time.sleep(10)
 
 if __name__ == "__main__":
     logger.info("Starting application monitor...")

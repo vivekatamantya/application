@@ -476,7 +476,7 @@ def main():
     WS_URL = f"ws://{server_ip}:{server_port}/"  # Construct WebSocket URL dynamically
     
     # Run the C++ binary in the background
-    run_cpp_binary()
+    # run_cpp_binary()
     
     ws = None
     while ws is None:

@@ -16,7 +16,7 @@ SOURCE_DIR = "./OutputFiles"
 DEST_BASE_DIR = "./StreamRecording"
 TIME_STATUS_PATH = "./system_timestamp.txt"
 CHECK_INTERVAL = 5
-DISK_THRESHOLD = 95
+DISK_THRESHOLD = 80
 # Generate log file name with timestamp
 timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
 LOG_FILE = f"log/file_management_service_{timestamp}.log"
@@ -24,41 +24,6 @@ MAX_LOG_FILE_SIZE_MB = 50  # Maximum log file size in MB
 CPP_LOG_FILE = "Application_logs_cpp.log" 
 COMMAND = f"./5GCamera_v2.0.1 "
 # COMMAND = f"./out "
-
-# Initialize WebSocket variable
-# ws = websocket.WebSocket() = None
-ws = websocket.WebSocket()
-
-def check_pid(pid):
-    """Check if a process with the given PID exists by querying with ps."""
-    try:
-        # Check if the PID exists by using the 'ps' command
-        result = os.popen(f"ps -p {pid}").read().strip()
-        return bool(result)  # If the result is non-empty, the process is running
-    except Exception as e:
-        logger.error(f"Error checking PID: {e}")
-        return False
-    
-def monitor_pid():
-    """Monitor the process with the PID for '5GCamera'."""
-    while True:
-        # Get PID of '5GCamera' using ps command (this is a blocking call)
-        pid = None
-        try:
-            result = os.popen('ps -e | grep 5GCamera').read().strip()
-            if result:
-                pid = int(result.split()[0])  # Extract PID
-        except Exception as e:
-            logger.error(f"Error finding process PID: {e}")
-        
-        if pid is None or not check_pid(pid):
-            logger.warning("5GCamera process not found or terminated. Exiting thread.")
-            return  # Exit the thread if the process is not found or terminated
-        
-        logger.debug(f"5GCamera process (PID: {pid}) is running.")
-        time.sleep(5)  # Check every 5 seconds
-
-
 
 # Function to load config from JSON
 def load_config(file_path):
@@ -69,6 +34,23 @@ def load_config(file_path):
     except Exception as e:
         logger.error(f"Failed to load configuration file: {e}")
         return None
+    
+def websocket_connect_and_receive(ws):
+    """
+    Handle WebSocket communication, including receiving data.
+    Returns True if a valid request to send buffered streams is received.
+    """
+    try:
+        message = ws.recv()
+        if message:
+            request = json.loads(message)
+            logger.info(f"Received request: {json.dumps(request, indent=2)}")
+            if request.get("type") == "request_buffered_streams":
+                logger.info("Valid request received. Preparing to send buffered stream data.")
+                return True
+    except Exception as e:
+        logger.error(f"Error receiving WebSocket message: {e}")
+    return False
 
 def is_file_complete(file_path, wait_time=5):
     """Check if the file size remains the same for a certain duration (indicating completion)."""
@@ -286,16 +268,16 @@ def handle_file_processing(ws, camera_id):
                         } for folder in folder_file_list
                     ]
                 }
-                        
-                # Send JSON data to WebSocket if network is available
-                # if network_available:
-                #     try:
-                #         ws.send(json.dumps(json_data))
-                #         logger.info(f"Data sent to WebSocket server. JSON data: {json.dumps(json_data, indent=2)}")
-                #     except Exception as e:
-                #         logger.error(f"Failed to send data via WebSocket: {e}")
 
-        time.sleep(5)  # Wait for the next check interval
+                # Send JSON data to WebSocket if network is available
+                #if network_available:
+                #    try:
+                #        ws.send(json.dumps(json_data))
+                #        logger.info(f"Data sent to WebSocket server. JSON data: {json.dumps(json_data, indent=2)}")
+                #    except Exception as e:
+                #        logger.error(f"Failed to send data via WebSocket: {e}")
+
+        time.sleep(1)  # Wait for the next check interval
 
 def handle_incoming_requests(ws, camera_id):
     """Handle incoming WebSocket requests."""
@@ -318,14 +300,12 @@ def handle_incoming_requests(ws, camera_id):
                     ]
                 }
                 # Send the JSON data back to WebSocket
-                if is_network_available:
-                    try:
-                        ws.send(json.dumps(json_data))
-                        logger.info(f"Sent buffered stream data for camera {camera_id} to WebSocket.")
-                        logger.info(f"Sent buffered stream data json: {json.dumps(json_data, indent=2)}")
-                    except Exception as e:
-                        logger.error(f"Failed to send data via WebSocket: {e}")
-                        
+                try:
+                    ws.send(json.dumps(json_data))
+                    logger.info(f"Sent buffered stream data for camera {camera_id} to WebSocket.")
+                    logger.info(f"Sent buffered stream data json >>>>>> {json.dumps(json_data, indent=2)}")
+                except Exception as e:
+                    logger.error(f"Failed to send data via WebSocket: {e}")
         except Exception as e:
             logger.error(f"Error processing incoming message: {e}")
         time.sleep(1)
@@ -466,8 +446,7 @@ def connect_websocket_with_retries(WS_URL,max_retries=5, delay=2):
     while retries < max_retries:
         try:
             ws.connect(WS_URL)
-            logger.info(f"Connected to WebSocket server at {WS_URL} {retries}")
-            time.sleep(5)
+            logger.info(f"Connected to WebSocket server at {WS_URL}")
             return ws  # Return the WebSocket instance on successful connection
         except Exception as e:
             retries += 1
@@ -479,76 +458,10 @@ def connect_websocket_with_retries(WS_URL,max_retries=5, delay=2):
                 logger.error("Max retries reached. Could not connect to WebSocket server.")
                 return None  # Return None after all retries fail
 
-def send_mp4_files_to_websocket(ws, camera_id):
-    """Send .mp4 file metadata to WebSocket."""
-    if ws is None or not ws.connected:
-        logger.error("WebSocket is not connected. Skipping sending .mp4 files.")
-        return
-    
-    mp4_files = [f for f in os.listdir(SOURCE_DIR) if f.endswith(".mp4") and os.path.isfile(os.path.join(SOURCE_DIR, f))]
-    
-    if mp4_files:
-        logger.info("Found .mp4 files, preparing to send to WebSocket.")
-        folder_file_list = {}  # Prepare a dictionary for folders and their files
-        
-        # Assuming the .mp4 files are to be sent directly as metadata
-        for file in mp4_files:
-            file_path = os.path.join(SOURCE_DIR, file)
-            metadata = get_file_metadata(file_path)
-
-            if metadata and metadata.get("duration") != "0 seconds":
-                folder_name = "StreamRecording"  # You can set this to a more dynamic name if needed
-                folder_file_list[folder_name] = folder_file_list.get(folder_name, [])
-                folder_file_list[folder_name].append({
-                    "name": file,
-                    "file_size": metadata.get("file_size", "Unknown"),
-                    "duration": metadata.get("duration", "0 seconds")
-                })
-
-        # Send metadata as JSON over WebSocket
-        json_data = {
-            "type": "buffered_streams_list",
-            "cameraId": camera_id,
-            "content": [
-                {
-                    "folderName": folder,
-                    "content": folder_file_list[folder]
-                } for folder in folder_file_list
-            ]
-        }
-        
-        # Send the JSON data to WebSocket
-        try:
-            ws.send(json.dumps(json_data))
-            logger.info(f"Sent initial .mp4 files data to WebSocket for camera {camera_id}.")
-            logger.info(f"Sent buffered stream data json: {json.dumps(json_data, indent=2)}")
-        except Exception as e:
-            logger.error(f"Failed to send .mp4 files data via WebSocket: {e}")
-
-# Check if WebSocket is connected
-def is_ws_connected(ws):
-    #return ws and ws.sock and ws.sock.connected
-    if ws and hasattr(ws,"status"):
-        print("9",ws.status)
-        return ws.status == 101
-    return False
-
-# Function to establish/reconnect WebSocket connection
-def ensure_ws_connection(WS_URL,ws):
-    while not is_ws_connected(ws):
-        try:
-            logger.info("Attempting to connect to WebSocket...")
-            ws.connect(WS_URL)  # Connect to WebSocket server
-            logger.info("WebSocket connection established.")
-        except Exception as e:
-            logger.error(f"WebSocket connection failed: {e}. Retrying in 5 seconds...")
-            time.sleep(5)  # Wait before retrying
-    return ws
-
 def main():
-    global ws
+    
     # Load server IP and port from JSON file
-    config = load_config("/home/root/json/new_config.json")
+    config = load_config("/home/root/json/config.json")
     if config:
         # Read server_ip and server_port from the JSON file
         server_ip = config.get("signalling_server_ip")
@@ -558,34 +471,23 @@ def main():
         # Ensure all required values are present in the config
         if not server_ip or not server_port or check_interval is None:
             logger.error("server_ip, server_port, and/or check_interval missing in the configuration file")
-            return
+            exit(1)
 
     WS_URL = f"ws://{server_ip}:{server_port}/"  # Construct WebSocket URL dynamically
     
     # Run the C++ binary in the background
-    pid = run_cpp_binary()
+    run_cpp_binary()
     
-    if pid is not None:
-        # Start a thread to monitor the PID
-        pid_monitor_thread = threading.Thread(target=monitor_pid)
-        pid_monitor_thread.daemon = True
-        pid_monitor_thread.start()
-    
-    retry_nw = 0
-    # Establish WebSocket connection
-    while not is_network_available() and retry_nw<7:
-        print("Waiting for Connection ",retry_nw)
-        time.sleep(5)
-        retry_nw+=1
-        
-    # if is_network_available():
-    ws = connect_websocket_with_retries(WS_URL,10)
-    if ws is None:
-        logger.error("Unable to establish WebSocket connection after multiple attempts.")
-        return
-    print("1",type(ws))
-    camera_id = continuously_read_timestamp_and_update_uuid()
-    
+    ws = None
+    while ws is None:
+        if is_network_available():
+            ws = connect_websocket_with_retries(WS_URL)
+        else:
+            logger.warning("Network is unavailable. Retrying in 5 seconds...")
+            time.sleep(5)  # Retry after a brief pause
+#    camera_id = continuously_read_timestamp_and_update_uuid()
+    # camera_id = "76e276ec-6ce1-47c9-8c34-4af35cf8ebf1"   
+    camera_id = "6ce1-47c9-8c34-4af35cf8ebfa" 
     # Convert UUID to string for JSON serialization
     camera_id = str(camera_id)
     logger.debug(f"camera_id >>>>> {camera_id}")
@@ -594,25 +496,17 @@ def main():
         "type": "new_camera_script",
         "cameraId": camera_id
     }
+    # Send JSON data to WebSocket if network is available
+    if is_network_available() and ws:
+        try:
+            ws.send(json.dumps(json_data))
+            logger.info(f"Data sent to WebSocket server. JSON data: {json.dumps(json_data, indent=2)}")
+        except Exception as e:
+            logger.error(f"Failed to send data via WebSocket: {e}")
     
-    # Send JSON data to WebSocket if network is available and WebSocket is connected
-    if is_network_available():
-        print("2",type(ws))
-        
-        ws = ensure_ws_connection(WS_URL,ws)
-        print("3",type(ws))
-        
-        if is_ws_connected(ws):
-            try:
-                ws.send(json.dumps(json_data))
-                logger.info(f"Data sent to WebSocket server. JSON data: {json.dumps(json_data, indent=2)}")
-            except Exception as e:
-                logger.error(f"Failed to send data via WebSocket: {e}")
     
-    if is_network_available():
-        send_mp4_files_to_websocket(ws, camera_id)
     
-    # Start a thread or process to handle incoming requests if WebSocket is connected
+    # Start a thread or process to handle incoming requests
     request_thread = threading.Thread(target=handle_incoming_requests, args=(ws, camera_id))
     request_thread.daemon = True
     request_thread.start()

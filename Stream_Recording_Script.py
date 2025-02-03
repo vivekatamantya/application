@@ -487,7 +487,7 @@ def main():
             time.sleep(5)  # Retry after a brief pause
 #    camera_id = continuously_read_timestamp_and_update_uuid()
     # camera_id = "76e276ec-6ce1-47c9-8c34-4af35cf8ebf1"   
-    camera_id = "6ce1-47c9-8c34-4af35cf8ebfa" 
+    camera_id = "6ce1-47c9-8c34-4af35cf8ebf8" 
     # Convert UUID to string for JSON serialization
     camera_id = str(camera_id)
     logger.debug(f"camera_id >>>>> {camera_id}")

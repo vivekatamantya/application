@@ -207,16 +207,16 @@ def main():
     if not config:
         return
 
-    server_ip = config.get("signalling_server_ip")
-    if not is_network_available(server_ip):
-        return
-
     pid = get_running_pid()
     if not pid:
         start_application()
 
     monitor_thread = threading.Thread(target=monitor_application, daemon=True)
     monitor_thread.start()
+    
+    server_ip = config.get("signalling_server_ip")
+    if not is_network_available(server_ip):
+        return
 
     ensure_uuid_file()
 

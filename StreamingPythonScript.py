@@ -7,23 +7,24 @@ import threading
 import logging
 import re
 import shutil
+import sys
 import traceback
 from datetime import datetime
-from CustomWebSocketClient import WebSocketClient
+from websocket_client import WebSocketClient
 
 # Constants
-JSON_CONFIG_FILE = "/home/root/FinalTestBuild/application/json/config.json"
+JSON_CONFIG_FILE = "/home/root/FinalBuildTest/application/json/config.json"
 CAMERA_APP_NAME = "5GCamera_v*"
-SYSTEM_TIMESTAMP_PATH = "/home/root/FinalTestBuild/application/sys_timestamp.txt"
-SYSTEM_UUID_PATH = "/home/root/FinalTestBuild/application/system_uuid.txt"
-CAMERA_APP_RUN_COMMAND = "/home/root/FinalTestBuild/application/5GCamera_v*"        # Command to start 5GCamera application
-CAMERA_APP_LOG_DIR = "/home/root/FinalTestBuild/application/Camera5gAppLogs"        # Define log directory
-PYTHON_SCRIPT_LOG_DIR = "/home/root/FinalTestBuild/application/PythonScriptLogs"    # Define log directory
+SYSTEM_TIMESTAMP_PATH = "/home/root/FinalBuildTest/application/sys_timestamp.txt"
+SYSTEM_UUID_PATH = "/home/root/FinalBuildTest/application/system_uuid.txt"
+CAMERA_APP_RUN_COMMAND = "/home/root/FinalBuildTest/application/5GCamera_v*"        # Command to start 5GCamera application
+CAMERA_APP_LOG_DIR = "/home/root/FinalBuildTest/application/Camera5gAppLogs"        # Define log directory
+PYTHON_SCRIPT_LOG_DIR = "/home/root/FinalBuildTest/application/PythonScriptLogs"    # Define log directory
 CAMERA_APP_MAX_LOG_FILES = 5                                                        # Max No of Cpp app to keep 
-DEST_BASE_DIR = "/home/root/FinalTestBuild/application/StreamRecordings"
-SOURCE_DIR = "/home/root/FinalTestBuild/application/OutputFiles"
+DEST_BASE_DIR = "/home/root/FinalBuildTest/application/StreamRecordings"
+SOURCE_DIR = "/home/root/FinalBuildTest/application/OutputFiles"
 CHECK_INTERVAL = 5
-DISK_THRESHOLD = 80
+DISK_THRESHOLD = 95
 
 # Initialize logger from your function
 from logging.handlers import RotatingFileHandler
@@ -35,7 +36,7 @@ def configure_logger():
 
         if not logger.handlers:
             if not os.path.exists(PYTHON_SCRIPT_LOG_DIR):
-                os.makedirs(PYTHON_SCRIPT_LOG_DIR)
+                os.makedirs(PYTHON_SCRIPT_LOG_DIR, exist_ok=True)
 
             # Log file path
             LOG_FILE = os.path.join(PYTHON_SCRIPT_LOG_DIR, "file_management_service.log")  # No timestamp (keeps rotating)
@@ -162,7 +163,7 @@ class StreamRecoder:
         try:
             # Ensure the log directory exists
             if not os.path.exists(CAMERA_APP_LOG_DIR):
-                os.makedirs(CAMERA_APP_LOG_DIR)  # Create the log directory if it does not exist
+                os.makedirs(CAMERA_APP_LOG_DIR, exist_ok=True)  # Create the log directory if it does not exist
                 return
             
             log_files = [f for f in os.listdir(log_dir) if f.endswith(".log")]
@@ -225,16 +226,18 @@ class StreamRecoder:
             except Exception as e:
                 logger.error(f"Error monitoring the app: {e}")
 
-
     def wait_for_timestamp_file(self):
-        """Wait indefinitely for system_timestamp.txt to appear"""
-        while True:
+        """Check for system_timestamp.txt a maximum of 3 times with a 15-second delay."""
+        max_attempts = 10
+        for attempt in range(1, max_attempts + 1):
             if os.path.exists(SYSTEM_TIMESTAMP_PATH):
                 logger.info(f"Timestamp file found: {SYSTEM_TIMESTAMP_PATH}")
                 return True
-            logger.warning("Waiting for timestamp file to appear...!!!")
-            time.sleep(5)  # Keep checking every 5 seconds
+            logger.warning(f"Attempt {attempt}/{max_attempts}: Waiting for timestamp file...")
+            time.sleep(5)
 
+        logger.error("Timestamp file not found after 3 attempts. Exiting...")
+        return False
 
     def read_timestamp(self):
         """Read the timestamp from system_timestamp.txt or fallback to current system time if corrupted"""
@@ -279,8 +282,9 @@ class StreamRecoder:
                     return existing_uuid
 
         # Wait for timestamp file before generating UUID
-        self.wait_for_timestamp_file()
-
+        ret = self.wait_for_timestamp_file()
+        if not ret:
+            return None
         timestamp = self.read_timestamp()
         if not timestamp:
             logger.error("Failed to retrieve timestamp. Exiting")
@@ -328,9 +332,10 @@ class StreamRecoder:
                     }
                     # Send the JSON data back to WebSocket
                     try:
+                        logger.info(f"Sending buffered streams to UI")
                         self.ws_client.send(json.dumps(json_data))
                         logger.info(f"Sent buffered stream data for camera {self.camera_id} to WebSocket.")
-                        logger.info(f"Sent buffered stream data json >>>>>> {json.dumps(json_data, indent=2)}")
+                        # logger.info(f"Sent buffered stream data json >>>>>> {json.dumps(json_data, indent=2)}")
                     except Exception as e:
                         logger.error(f"Failed to send data via WebSocket: {e}")
             except KeyboardInterrupt:
@@ -473,7 +478,8 @@ class StreamRecoder:
                 return
             if not os.path.exists(DEST_BASE_DIR):
                 logger.error(f"Destination base directory {DEST_BASE_DIR} does not exist.")
-                return
+                logger.info(f"Creating Directory {DEST_BASE_DIR}.")
+                os.makedirs(DEST_BASE_DIR, exist_ok=True)
             # Check disk usage before moving files
             usage = self.get_disk_usage(SOURCE_DIR)
             if usage >= DISK_THRESHOLD:
@@ -549,6 +555,8 @@ def main():
         
         # Ensure UUID file exists or create it
         uuid_app = streamer.ensure_uuid_file()
+        if uuid_app is None:
+            raise Exception("Exiting:: Reason:: Timestamp file not found after 3 attempts. Exiting...")
         logger.info(f"UUID Data: {uuid_app}")
         
         #handle_websocket
@@ -557,7 +565,8 @@ def main():
         
         streamer.stop_event.set()  # Signal the thread to stop
         monitor_thread.join()  # Wait for the thread to exit
-
+    except KeyboardInterrupt:
+        logger.error("Keyboard Interrupt ....")
     except Exception as err:
         logger.error(f"Error :: main :: {err}")
     finally:
